@@ -108,6 +108,7 @@ def parse_parts(service, parts, folder_name):
                 print("Saving HTML to", filepath)
                 with open(filepath, "wb") as f:
                     f.write(urlsafe_b64decode(data))
+                    # print((urlsafe_b64decode(data).decode("utf-8")))
 
 search_query = 'from:ebay@ebay.com subject:"Da, your order is confirmed"'
 
