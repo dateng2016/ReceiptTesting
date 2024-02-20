@@ -1,19 +1,11 @@
 import os.path
 import os
-import pickle
-
-
+from bs4 import BeautifulSoup
 
 # for encoding/decoding messages in base64
-from base64 import urlsafe_b64decode, urlsafe_b64encode
-# for dealing with attachement MIME types
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.image import MIMEImage
-from email.mime.audio import MIMEAudio
-from email.mime.base import MIMEBase
-from mimetypes import guess_type as guess_mime_type
+from base64 import urlsafe_b64decode
 
+# for dealing with attachement MIME types
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -22,6 +14,7 @@ from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+FOLDER_NAME = 'ReceiptFolder'
 
 
 
@@ -77,79 +70,141 @@ def search_messages(service, query):
             messages.extend(result['messages'])
     return messages
 
-def parse_parts(service, parts, folder_name, result_list):
+def parse_parts(parts, file_count, folder_name=FOLDER_NAME):
     """
     Utility function that parses the content of an email partition
     """
+
     if not os.path.exists(folder_name):
         os.makedirs(folder_name)
+
     if parts:
         for part in parts:
             filename = part.get("filename")
             mimeType = part.get("mimeType")
             body = part.get("body")
             data = body.get("data")
-            file_size = body.get("size")
-            part_headers = part.get("headers")
 
             binary_data = urlsafe_b64decode(data)
             if part.get("parts"):
                 # recursively call this function when we see that a part
                 # has parts inside
-                parse_parts(service, part.get("parts"), folder_name, result_list)
-            if mimeType == "text/plain":
-                # if the email part is text plain
-                if data:
-                    text = binary_data.decode()
-                    print(text)
-            elif mimeType == "text/html":
+                file_count[0] += 1
+                parse_parts(part.get("parts"), folder_name, file_count)
+            if mimeType == "text/html":
                 # if the email part is an HTML content
                 # save the HTML file and optionally open it in the browser
                 if not filename:
-                    filename = "index.html"
+                    file_count[0] += 1
+                    filename = "index"+str(file_count[0])+".html"
                 filepath = os.path.join(folder_name, filename)
                 print("Saving HTML to", filepath)
                 with open(filepath, "wb") as f:
-<<<<<<< HEAD
-                    f.write(urlsafe_b64decode(data))
-                    # print((urlsafe_b64decode(data).decode("utf-8")))
-=======
                     f.write(binary_data)
                 # print(binary_data.decode())
-                result_list.append(binary_data.decode())
->>>>>>> 5e052bd5880664991d159c4ca5dac69c5a13b587
+                return binary_data.decode()
 
         
+def get_ebay_results(service, msg_id, file_count):
+    msg = service.users().messages().get(userId='me', id=msg_id).execute()
+    html_content = parse_parts(msg['payload']['parts'], file_count, 'ReceiptFolder')
+    headers = msg['payload']['headers']
+    for header in headers:
+        if header['name'].lower() == 'date':
+            date = header['value']
+        if header['name'].lower() == 'from':
+            sender = header['value']
+    
+    sender = sender.split(' ')[0]
+        
+    soup = BeautifulSoup(html_content, 'html.parser')
+    name_tag = soup.find('a', class_='title')
+    name = name_tag.string
+    price_tag = soup.find('p', class_='labelValueValue').find('b')
+    price = price_tag.string
+
+    return sender, date, name, price
+    
+def get_walmart_results(service, msg_id, file_count, folder_name = FOLDER_NAME):
+    msg = service.users().messages().get(userId='me', id=msg_id).execute()
+    binary_data = urlsafe_b64decode(msg['payload']['body']['data'])
+    file_count[0] += 1
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
+    filename = "index"+str(file_count[0])+".html"
+    filepath = os.path.join(folder_name, filename)
+    print("Saving HTML to", filepath)
+    with open(filepath, "wb") as f:
+        f.write(binary_data)
+    headers = msg['payload']['headers']
+    for header in headers:
+        if header['name'].lower() == 'date':
+            date = header['value']
+        if header['name'].lower() == 'from':
+            sender = header['value']
+    sender = sender.split('"')[1].split('.')[0]
 
 
+    return sender, date
 
+def get_amazon_results(service, msg_id, file_count, folder_name = FOLDER_NAME):
+    msg = service.users().messages().get(userId='me', id=msg_id).execute()
+    html_content = parse_parts(msg['payload']['parts'], file_count, folder_name)
+    headers = msg['payload']['headers']
+    for header in headers:
+        if header['name'].lower() == 'date':
+            date = header['value']
+        if header['name'].lower() == 'from':
+            sender = header['value']
+    sender = sender.split('"')[1].split('.')[0]
+    return sender, date
+    
 
 
 if __name__ == "__main__":
     service = start_service()
-    search_query = 'from:ebay@ebay.com subject:"Da, your order is confirmed"'
+    ebay_search_query = 'from:ebay@ebay.com subject:"Da, your order is confirmed"'
+    walmart_search_query = 'from:help@walmart.com subject:"Da, thanks for your order"'
+    amazon_search_query = 'from:auto-confirm@amazon.com'
+
+    query = walmart_search_query
+
     # Call the Gmail API to search for messages
-    messages = service.users().messages().list(userId='me', q=search_query).execute()
+    messages = service.users().messages().list(userId='me', q=query).execute()
     html_list = []
 
-
-
     # Check if any messages match the search criteria
+    file_count = [0]
     if 'messages' in messages:
         for message in messages['messages']:
             # Get the message details
             msg_id = message['id']
-            msg = service.users().messages().get(userId='me', id=msg_id).execute()
-            parse_parts(service, msg['payload']['parts'], 'ReceiptFolder', html_list)
+            # For eBay
+            if query == ebay_search_query:
+                sender, date, name, price = get_ebay_results(service, msg_id, file_count)
+                print('Merchant Name: ', sender)
+                print('Date: ', date)
+                print('Item Name: ', name)
+                print("Price: ", price)
+            # For Walmart
+            if query == walmart_search_query:
+                sender, date = get_walmart_results(service, msg_id, file_count)
+                print('Merchant Name: ', sender)
+                print('Date: ', date)
 
-            # Print the snippet (preview) of the message
-            # print('Message snippet:', msg['snippet'])
-            # print(msg['payload'].keys())
-            # parts = msg['payload']['parts']
-            # print(parts[0].keys())
-            # print((parts[0]['body']))
-            # Print the full message (optional)
-            # print('Full message:', msg)
+
+            # For amazon
+            if query == amazon_search_query:
+                sender, date = get_amazon_results(service, msg_id, file_count)
+                print('Merchant Name: ', sender)
+                print('Date: ', date)
+            
+            # Avoid having too many queries
+            if file_count[0] >= 10:
+                break
+
+
     else:
         print('No messages found matching the search criteria.')
-    print(len(html_list))
+
+
