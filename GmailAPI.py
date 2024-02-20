@@ -41,34 +41,12 @@ def start_service():
     try:
     # Call the Gmail API
         service = build("gmail", "v1", credentials=creds)
-        results = service.users().labels().list(userId="me").execute()
-        labels = results.get("labels", [])
-
-        if not labels:
-            print("No labels found.")
-
-        # print("Labels:")
-        for label in labels:
-        #   print(label["name"])
-            pass
         return service
 
     except HttpError as error:
     # TODO(developer) - Handle errors from gmail API.
         print(f"An error occurred: {error}")
 
-
-def search_messages(service, query):
-    result = service.users().messages().list(userId='me',q=query).execute()
-    messages = [ ]
-    if 'messages' in result:
-        messages.extend(result['messages'])
-    while 'nextPageToken' in result:
-        page_token = result['nextPageToken']
-        result = service.users().messages().list(userId='me',q=query, pageToken=page_token).execute()
-        if 'messages' in result:
-            messages.extend(result['messages'])
-    return messages
 
 def parse_parts(parts, file_count, folder_name=FOLDER_NAME):
     """
@@ -163,6 +141,8 @@ def get_amazon_results(service, msg_id, file_count, folder_name = FOLDER_NAME):
 
 if __name__ == "__main__":
     service = start_service()
+
+    # Below are some example query, please modify this when running the code
     ebay_search_query = 'from:ebay@ebay.com subject:"Da, your order is confirmed"'
     walmart_search_query = 'from:help@walmart.com subject:"Da, thanks for your order"'
     amazon_search_query = 'from:auto-confirm@amazon.com'
@@ -171,7 +151,6 @@ if __name__ == "__main__":
 
     # Call the Gmail API to search for messages
     messages = service.users().messages().list(userId='me', q=query).execute()
-    html_list = []
 
     # Check if any messages match the search criteria
     file_count = [0]
@@ -179,6 +158,7 @@ if __name__ == "__main__":
         for message in messages['messages']:
             # Get the message details
             msg_id = message['id']
+            
             # For eBay
             if query == ebay_search_query:
                 sender, date, name, price = get_ebay_results(service, msg_id, file_count)
@@ -186,12 +166,12 @@ if __name__ == "__main__":
                 print('Date: ', date)
                 print('Item Name: ', name)
                 print("Price: ", price)
+
             # For Walmart
             if query == walmart_search_query:
                 sender, date = get_walmart_results(service, msg_id, file_count)
                 print('Merchant Name: ', sender)
                 print('Date: ', date)
-
 
             # For amazon
             if query == amazon_search_query:
